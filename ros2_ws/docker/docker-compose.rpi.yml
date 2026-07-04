@@ -1,0 +1,14 @@
+services:
+  ros2:
+    build:
+      context: ../..
+      dockerfile: ros2_ws/docker/Dockerfile
+    container_name: vacuum_ros2
+    network_mode: host
+    privileged: true
+    volumes:
+      - ../:/ros2_ws
+      - /dev:/dev
+    stdin_open: true
+    tty: true
+    command: bash
