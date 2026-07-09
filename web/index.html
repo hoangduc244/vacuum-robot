@@ -11,7 +11,7 @@
       background: #111;
       color: white;
       text-align: center;
-      margin-top: 40px;
+      margin-top: 30px;
     }
 
     h1 {
@@ -43,6 +43,26 @@
       margin-top: 20px;
       font-size: 18px;
     }
+
+    #keyboard {
+      margin-top: 20px;
+      font-size: 18px;
+      color: #cccccc;
+      line-height: 1.6;
+    }
+
+    #lidarCanvas {
+      margin-top: 25px;
+      background: #000;
+      border: 2px solid #4da6ff;
+      border-radius: 12px;
+    }
+
+    #lidarInfo {
+      color: #cccccc;
+      margin-top: 10px;
+      font-size: 16px;
+    }
   </style>
 </head>
 
@@ -50,20 +70,51 @@
   <h1>Vacuum Robot Controller</h1>
 
   <div>
-    <button class="move" onclick="sendCmd(0.05, 0.0)">Forward</button>
+    <button class="move"
+      onmousedown="startCommand(0.05, 0.0)"
+      onmouseup="stopCommand()"
+      onmouseleave="stopCommand()">
+      Forward
+    </button>
   </div>
 
   <div>
-    <button class="move" onclick="sendCmd(0.0, 0.3)">Left</button>
-    <button class="stop" onclick="sendCmd(0.0, 0.0)">STOP</button>
-    <button class="move" onclick="sendCmd(0.0, -0.3)">Right</button>
+    <button class="move"
+      onmousedown="startCommand(0.0, 0.3)"
+      onmouseup="stopCommand()"
+      onmouseleave="stopCommand()">
+      Left
+    </button>
+
+    <button class="stop" onclick="stopCommand()">STOP</button>
+
+    <button class="move"
+      onmousedown="startCommand(0.0, -0.3)"
+      onmouseup="stopCommand()"
+      onmouseleave="stopCommand()">
+      Right
+    </button>
   </div>
 
   <div>
-    <button class="move" onclick="sendCmd(-0.05, 0.0)">Backward</button>
+    <button class="move"
+      onmousedown="startCommand(-0.05, 0.0)"
+      onmouseup="stopCommand()"
+      onmouseleave="stopCommand()">
+      Backward
+    </button>
   </div>
 
   <p id="status">Connecting...</p>
+
+  <div id="keyboard">
+    Keyboard Control:<br>
+    W = Forward | S = Backward | A = Left | D = Right | Space = Stop<br>
+    Hold key = keep moving | Release key = stop
+  </div>
+
+  <canvas id="lidarCanvas" width="600" height="600"></canvas>
+  <div id="lidarInfo">Waiting for /scan...</div>
 
   <script>
     const ros = new ROSLIB.Ros({
@@ -108,6 +159,198 @@
       document.getElementById("status").innerText =
         "Sent: linear.x=" + linearX + ", angular.z=" + angularZ;
     }
+
+    let activeKey = null;
+    let commandTimer = null;
+
+    function startCommand(linearX, angularZ) {
+      sendCmd(linearX, angularZ);
+
+      if (commandTimer !== null) {
+        clearInterval(commandTimer);
+      }
+
+      commandTimer = setInterval(function() {
+        sendCmd(linearX, angularZ);
+      }, 100);
+    }
+
+    function stopCommand() {
+      if (commandTimer !== null) {
+        clearInterval(commandTimer);
+        commandTimer = null;
+      }
+
+      sendCmd(0.0, 0.0);
+    }
+
+    document.addEventListener("keydown", function(event) {
+      const key = event.key.toLowerCase();
+
+      if (activeKey === key) {
+        return;
+      }
+
+      activeKey = key;
+
+      if (key === "w") {
+        startCommand(0.05, 0.0);
+      }
+      else if (key === "s") {
+        startCommand(-0.05, 0.0);
+      }
+      else if (key === "a") {
+        startCommand(0.0, 0.3);
+      }
+      else if (key === "d") {
+        startCommand(0.0, -0.3);
+      }
+      else if (key === " ") {
+        stopCommand();
+      }
+    });
+
+    document.addEventListener("keyup", function(event) {
+      const key = event.key.toLowerCase();
+
+      if (key === activeKey) {
+        activeKey = null;
+        stopCommand();
+      }
+    });
+
+    // ================= LiDAR Visualization =================
+
+    const canvas = document.getElementById("lidarCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
+
+    // Scale: 1 meter = 80 pixels
+    const scale = 80;
+
+    function drawRobot() {
+      ctx.fillStyle = "#4da6ff";
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Robot front direction.
+      // Your robot front is around 180 deg in LiDAR frame.
+      ctx.strokeStyle = "#ff4d4d";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(centerX, centerY - 35);
+      ctx.stroke();
+
+      ctx.fillStyle = "#ff4d4d";
+      ctx.font = "14px Arial";
+      ctx.fillText("Front", centerX - 20, centerY - 45);
+    }
+
+    function drawGrid() {
+      ctx.strokeStyle = "#333";
+      ctx.lineWidth = 1;
+
+      for (let r = 1; r <= 3; r++) {
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, r * scale, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        ctx.fillStyle = "#777";
+        ctx.font = "12px Arial";
+        ctx.fillText(r + "m", centerX + 5, centerY - r * scale);
+      }
+
+      ctx.strokeStyle = "#222";
+      ctx.beginPath();
+      ctx.moveTo(centerX, 0);
+      ctx.lineTo(centerX, canvasHeight);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
+      ctx.lineTo(canvasWidth, centerY);
+      ctx.stroke();
+    }
+
+    function drawScan(msg) {
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+      drawGrid();
+      drawRobot();
+
+      ctx.fillStyle = "#00ff88";
+
+      let validCount = 0;
+      let closest = null;
+
+      for (let i = 0; i < msg.ranges.length; i++) {
+        const range = msg.ranges[i];
+
+        if (!isFinite(range)) {
+          continue;
+        }
+
+        if (range < msg.range_min || range > msg.range_max) {
+          continue;
+        }
+
+        // Limit drawing to 3 meters so room is easier to see
+        if (range > 3.0) {
+          continue;
+        }
+
+        const angle = msg.angle_min + i * msg.angle_increment;
+
+        // Rotate LiDAR display so website front matches robot front.
+        // Your test showed website front was actual left,
+        // so rotate display 90 degrees clockwise.
+        const displayAngle = angle - Math.PI / 2;
+
+        // LiDAR coordinates after rotation:
+        const x = range * Math.cos(displayAngle);
+        const y = range * Math.sin(displayAngle);
+
+        // Canvas:
+        // x right, y down
+        const px = centerX + x * scale;
+        const py = centerY - y * scale;
+       
+
+        ctx.beginPath();
+        ctx.arc(px, py, 2, 0, 2 * Math.PI);
+        ctx.fill();
+
+        validCount++;
+
+        if (closest === null || range < closest) {
+          closest = range;
+        }
+      }
+
+      if (closest === null) {
+        document.getElementById("lidarInfo").innerText =
+          "LiDAR: no valid points";
+      } else {
+        document.getElementById("lidarInfo").innerText =
+          "LiDAR points: " + validCount + " | Closest: " + closest.toFixed(2) + " m";
+      }
+    }
+
+    const scanTopic = new ROSLIB.Topic({
+      ros: ros,
+      name: "/scan",
+      messageType: "sensor_msgs/LaserScan"
+    });
+
+    scanTopic.subscribe(function(msg) {
+      drawScan(msg);
+    });
   </script>
 </body>
 </html>
