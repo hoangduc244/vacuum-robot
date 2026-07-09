@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Vacuum Robot Web Controller</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/roslib/build/roslib.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial;
+      background: #111;
+      color: white;
+      text-align: center;
+      margin-top: 40px;
+    }
+
+    h1 {
+      color: #4da6ff;
+    }
+
+    button {
+      width: 140px;
+      height: 70px;
+      margin: 10px;
+      font-size: 22px;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+    }
+
+    .move {
+      background: #4da6ff;
+      color: white;
+    }
+
+    .stop {
+      background: #ff4d4d;
+      color: white;
+      width: 180px;
+    }
+
+    #status {
+      margin-top: 20px;
+      font-size: 18px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Vacuum Robot Controller</h1>
+
+  <div>
+    <button class="move" onclick="sendCmd(0.05, 0.0)">Forward</button>
+  </div>
+
+  <div>
+    <button class="move" onclick="sendCmd(0.0, 0.3)">Left</button>
+    <button class="stop" onclick="sendCmd(0.0, 0.0)">STOP</button>
+    <button class="move" onclick="sendCmd(0.0, -0.3)">Right</button>
+  </div>
+
+  <div>
+    <button class="move" onclick="sendCmd(-0.05, 0.0)">Backward</button>
+  </div>
+
+  <p id="status">Connecting...</p>
+
+  <script>
+    const ros = new ROSLIB.Ros({
+      url: "ws://" + window.location.hostname + ":9090"
+    });
+
+    ros.on("connection", function() {
+      document.getElementById("status").innerText = "Connected to ROS 2";
+    });
+
+    ros.on("error", function(error) {
+      document.getElementById("status").innerText = "Error connecting to ROS 2";
+      console.log(error);
+    });
+
+    ros.on("close", function() {
+      document.getElementById("status").innerText = "Connection closed";
+    });
+
+    const cmdVel = new ROSLIB.Topic({
+      ros: ros,
+      name: "/cmd_vel",
+      messageType: "geometry_msgs/Twist"
+    });
+
+    function sendCmd(linearX, angularZ) {
+      const twist = new ROSLIB.Message({
+        linear: {
+          x: linearX,
+          y: 0.0,
+          z: 0.0
+        },
+        angular: {
+          x: 0.0,
+          y: 0.0,
+          z: angularZ
+        }
+      });
+
+      cmdVel.publish(twist);
+
+      document.getElementById("status").innerText =
+        "Sent: linear.x=" + linearX + ", angular.z=" + angularZ;
+    }
+  </script>
+</body>
+</html>
