@@ -63,6 +63,14 @@
       margin-top: 10px;
       font-size: 16px;
     }
+
+    #distanceInfo {
+       color: #ffffff;
+       margin-top: 8px;
+       font-size: 18px;
+    }
+
+
   </style>
 </head>
 
@@ -115,6 +123,7 @@
 
   <canvas id="lidarCanvas" width="600" height="600"></canvas>
   <div id="lidarInfo">Waiting for /scan...</div>
+  <div id="distanceInfo">Front: -- | Left: -- | Right: -- | Closest: --</div>
 
   <script>
     const ros = new ROSLIB.Ros({
@@ -287,7 +296,10 @@
       ctx.fillStyle = "#00ff88";
 
       let validCount = 0;
-      let closest = null;
+     let closest = null;
+     let frontDistance = null;
+     let leftDistance = null;
+     let rightDistance = null;
 
       for (let i = 0; i < msg.ranges.length; i++) {
         const range = msg.ranges[i];
@@ -331,15 +343,65 @@
         if (closest === null || range < closest) {
           closest = range;
         }
+           // Distance windows in robot frame after display rotation.
+// On the canvas:
+// front = up
+// left = left
+// right = right
+const robotAngle = displayAngle;
+
+function angleDiff(a, b) {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+
+// In canvas/robot display:
+// front is +90 deg after y-axis conversion
+// left is 180 deg
+// right is 0 deg
+const frontCenter = Math.PI / 2;
+const leftCenter = Math.PI;
+const rightCenter = 0;
+const windowSize = Math.PI / 9; // 20 degrees
+
+if (Math.abs(angleDiff(robotAngle, frontCenter)) < windowSize) {
+  if (frontDistance === null || range < frontDistance) {
+    frontDistance = range;
+  }
+}
+
+if (Math.abs(angleDiff(robotAngle, leftCenter)) < windowSize) {
+  if (leftDistance === null || range < leftDistance) {
+    leftDistance = range;
+  }
+}
+
+if (Math.abs(angleDiff(robotAngle, rightCenter)) < windowSize) {
+  if (rightDistance === null || range < rightDistance) {
+    rightDistance = range;
+  }
+}
       }
 
-      if (closest === null) {
-        document.getElementById("lidarInfo").innerText =
-          "LiDAR: no valid points";
-      } else {
-        document.getElementById("lidarInfo").innerText =
-          "LiDAR points: " + validCount + " | Closest: " + closest.toFixed(2) + " m";
-      }
+      function showDistance(value) {
+  if (value === null) {
+    return "--";
+  }
+  return value.toFixed(2) + " m";
+}
+
+if (closest === null) {
+  document.getElementById("lidarInfo").innerText =
+    "LiDAR: no valid points";
+} else {
+  document.getElementById("lidarInfo").innerText =
+    "LiDAR points: " + validCount;
+}
+
+document.getElementById("distanceInfo").innerText =
+  "Front: " + showDistance(frontDistance) +
+  " | Left: " + showDistance(leftDistance) +
+  " | Right: " + showDistance(rightDistance) +
+  " | Closest: " + showDistance(closest);
     }
 
     const scanTopic = new ROSLIB.Topic({
