@@ -7,6 +7,7 @@ RUN apt update && apt install -y \
     python3-colcon-common-extensions \
     python3-serial \
     ros-jazzy-rosbridge-server \
+    ros-jazzy-slam-toolbox \
     git \
     nano \
     && rm -rf /var/lib/apt/lists/*
