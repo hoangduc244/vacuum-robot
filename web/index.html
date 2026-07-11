@@ -70,6 +70,14 @@
        font-size: 18px;
     }
 
+    #odomInfo {
+  color: #ffffff;
+  margin-top: 8px;
+  font-size: 18px;
+    }
+
+
+
 
   </style>
 </head>
@@ -124,6 +132,7 @@
   <canvas id="lidarCanvas" width="600" height="600"></canvas>
   <div id="lidarInfo">Waiting for /scan...</div>
   <div id="distanceInfo">Front: -- | Left: -- | Right: -- | Closest: --</div>
+  <div id="odomInfo">Odom X: -- | Odom Y: -- | Heading: --</div>
 
   <script>
     const ros = new ROSLIB.Ros({
@@ -413,6 +422,31 @@ document.getElementById("distanceInfo").innerText =
     scanTopic.subscribe(function(msg) {
       drawScan(msg);
     });
+
+    // ================= Odometry Display =================
+
+const odomTopic = new ROSLIB.Topic({
+  ros: ros,
+  name: "/odom",
+  messageType: "nav_msgs/Odometry"
+});
+
+odomTopic.subscribe(function(msg) {
+  const x = msg.pose.pose.position.x;
+  const y = msg.pose.pose.position.y;
+
+  const qz = msg.pose.pose.orientation.z;
+  const qw = msg.pose.pose.orientation.w;
+
+  const headingRad = 2.0 * Math.atan2(qz, qw);
+  const headingDeg = headingRad * 180.0 / Math.PI;
+
+  document.getElementById("odomInfo").innerText =
+    "Odom X: " + x.toFixed(3) + " m" +
+    " | Odom Y: " + y.toFixed(3) + " m" +
+    " | Heading: " + headingDeg.toFixed(1) + "°";
+});
+
   </script>
 </body>
 </html>
