@@ -11,115 +11,69 @@
       background: #111;
       color: white;
       text-align: center;
-      margin-top: 30px;
+      margin-top: 20px;
     }
 
     h1 {
       color: #4da6ff;
+      margin-bottom: 10px;
     }
 
-    button {
-      width: 140px;
-      height: 70px;
-      margin: 10px;
-      font-size: 22px;
-      border-radius: 12px;
-      border: none;
-      cursor: pointer;
-    }
-
-    .move {
-      background: #4da6ff;
-      color: white;
-    }
-
-    .stop {
-      background: #ff4d4d;
-      color: white;
-      width: 180px;
+    h2 {
+      color: #ffaa00;
+      margin-bottom: 10px;
     }
 
     #status {
-      margin-top: 20px;
+      margin-top: 10px;
       font-size: 18px;
     }
 
     #keyboard {
-      margin-top: 20px;
+      margin-top: 12px;
       font-size: 18px;
       color: #cccccc;
       line-height: 1.6;
     }
 
+    .dashboard {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 24px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    .panel {
+      width: 520px;
+    }
+
     #lidarCanvas {
-      margin-top: 25px;
       background: #000;
       border: 2px solid #4da6ff;
       border-radius: 12px;
     }
 
-    #lidarInfo {
-      color: #cccccc;
-      margin-top: 10px;
+    #mapCanvas {
+      background: #222;
+      border: 2px solid #ffaa00;
+      border-radius: 12px;
+    }
+
+    #lidarInfo,
+    #distanceInfo,
+    #odomInfo,
+    #mapInfo {
+      color: #ffffff;
+      margin-top: 8px;
       font-size: 16px;
     }
-
-    #distanceInfo {
-       color: #ffffff;
-       margin-top: 8px;
-       font-size: 18px;
-    }
-
-    #odomInfo {
-  color: #ffffff;
-  margin-top: 8px;
-  font-size: 18px;
-    }
-
-
-
-
   </style>
 </head>
 
 <body>
   <h1>Vacuum Robot Controller</h1>
-
-  <div>
-    <button class="move"
-      onmousedown="startCommand(0.05, 0.0)"
-      onmouseup="stopCommand()"
-      onmouseleave="stopCommand()">
-      Forward
-    </button>
-  </div>
-
-  <div>
-    <button class="move"
-      onmousedown="startCommand(0.0, 0.3)"
-      onmouseup="stopCommand()"
-      onmouseleave="stopCommand()">
-      Left
-    </button>
-
-    <button class="stop" onclick="stopCommand()">STOP</button>
-
-    <button class="move"
-      onmousedown="startCommand(0.0, -0.3)"
-      onmouseup="stopCommand()"
-      onmouseleave="stopCommand()">
-      Right
-    </button>
-  </div>
-
-  <div>
-    <button class="move"
-      onmousedown="startCommand(-0.05, 0.0)"
-      onmouseup="stopCommand()"
-      onmouseleave="stopCommand()">
-      Backward
-    </button>
-  </div>
 
   <p id="status">Connecting...</p>
 
@@ -129,10 +83,21 @@
     Hold key = keep moving | Release key = stop
   </div>
 
-  <canvas id="lidarCanvas" width="600" height="600"></canvas>
-  <div id="lidarInfo">Waiting for /scan...</div>
-  <div id="distanceInfo">Front: -- | Left: -- | Right: -- | Closest: --</div>
-  <div id="odomInfo">Odom X: -- | Odom Y: -- | Heading: --</div>
+  <div class="dashboard">
+    <div class="panel">
+      <h2>LiDAR View</h2>
+      <canvas id="lidarCanvas" width="500" height="500"></canvas>
+      <div id="lidarInfo">Waiting for /scan...</div>
+      <div id="distanceInfo">Front: -- | Left: -- | Right: -- | Closest: --</div>
+      <div id="odomInfo">Odom X: -- | Odom Y: -- | Heading: --</div>
+    </div>
+
+    <div class="panel">
+      <h2>SLAM Map</h2>
+      <canvas id="mapCanvas" width="500" height="500"></canvas>
+      <div id="mapInfo">Waiting for /map...</div>
+    </div>
+  </div>
 
   <script>
     const ros = new ROSLIB.Ros({
@@ -151,6 +116,8 @@
     ros.on("close", function() {
       document.getElementById("status").innerText = "Connection closed";
     });
+
+    // ================= Robot Control =================
 
     const cmdVel = new ROSLIB.Topic({
       ros: ros,
@@ -247,8 +214,12 @@
     const centerX = canvasWidth / 2;
     const centerY = canvasHeight / 2;
 
-    // Scale: 1 meter = 80 pixels
-    const scale = 80;
+    // Scale: 1 meter = 70 pixels
+    const scale = 70;
+
+    function angleDiff(a, b) {
+      return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+    }
 
     function drawRobot() {
       ctx.fillStyle = "#4da6ff";
@@ -256,8 +227,6 @@
       ctx.arc(centerX, centerY, 8, 0, 2 * Math.PI);
       ctx.fill();
 
-      // Robot front direction.
-      // Your robot front is around 180 deg in LiDAR frame.
       ctx.strokeStyle = "#ff4d4d";
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -296,6 +265,13 @@
       ctx.stroke();
     }
 
+    function showDistance(value) {
+      if (value === null) {
+        return "--";
+      }
+      return value.toFixed(2) + " m";
+    }
+
     function drawScan(msg) {
       ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
@@ -305,10 +281,10 @@
       ctx.fillStyle = "#00ff88";
 
       let validCount = 0;
-     let closest = null;
-     let frontDistance = null;
-     let leftDistance = null;
-     let rightDistance = null;
+      let closest = null;
+      let frontDistance = null;
+      let leftDistance = null;
+      let rightDistance = null;
 
       for (let i = 0; i < msg.ranges.length; i++) {
         const range = msg.ranges[i];
@@ -329,19 +305,13 @@
         const angle = msg.angle_min + i * msg.angle_increment;
 
         // Rotate LiDAR display so website front matches robot front.
-        // Your test showed website front was actual left,
-        // so rotate display 90 degrees clockwise.
         const displayAngle = angle - Math.PI / 2;
 
-        // LiDAR coordinates after rotation:
         const x = range * Math.cos(displayAngle);
         const y = range * Math.sin(displayAngle);
 
-        // Canvas:
-        // x right, y down
         const px = centerX + x * scale;
         const py = centerY - y * scale;
-       
 
         ctx.beginPath();
         ctx.arc(px, py, 2, 0, 2 * Math.PI);
@@ -352,65 +322,46 @@
         if (closest === null || range < closest) {
           closest = range;
         }
-           // Distance windows in robot frame after display rotation.
-// On the canvas:
-// front = up
-// left = left
-// right = right
-const robotAngle = displayAngle;
 
-function angleDiff(a, b) {
-  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
-}
+        const robotAngle = displayAngle;
 
-// In canvas/robot display:
-// front is +90 deg after y-axis conversion
-// left is 180 deg
-// right is 0 deg
-const frontCenter = Math.PI / 2;
-const leftCenter = Math.PI;
-const rightCenter = 0;
-const windowSize = Math.PI / 9; // 20 degrees
+        const frontCenter = Math.PI / 2;
+        const leftCenter = Math.PI;
+        const rightCenter = 0;
+        const windowSize = Math.PI / 9; // 20 degrees
 
-if (Math.abs(angleDiff(robotAngle, frontCenter)) < windowSize) {
-  if (frontDistance === null || range < frontDistance) {
-    frontDistance = range;
-  }
-}
+        if (Math.abs(angleDiff(robotAngle, frontCenter)) < windowSize) {
+          if (frontDistance === null || range < frontDistance) {
+            frontDistance = range;
+          }
+        }
 
-if (Math.abs(angleDiff(robotAngle, leftCenter)) < windowSize) {
-  if (leftDistance === null || range < leftDistance) {
-    leftDistance = range;
-  }
-}
+        if (Math.abs(angleDiff(robotAngle, leftCenter)) < windowSize) {
+          if (leftDistance === null || range < leftDistance) {
+            leftDistance = range;
+          }
+        }
 
-if (Math.abs(angleDiff(robotAngle, rightCenter)) < windowSize) {
-  if (rightDistance === null || range < rightDistance) {
-    rightDistance = range;
-  }
-}
+        if (Math.abs(angleDiff(robotAngle, rightCenter)) < windowSize) {
+          if (rightDistance === null || range < rightDistance) {
+            rightDistance = range;
+          }
+        }
       }
 
-      function showDistance(value) {
-  if (value === null) {
-    return "--";
-  }
-  return value.toFixed(2) + " m";
-}
+      if (closest === null) {
+        document.getElementById("lidarInfo").innerText =
+          "LiDAR: no valid points";
+      } else {
+        document.getElementById("lidarInfo").innerText =
+          "LiDAR points: " + validCount;
+      }
 
-if (closest === null) {
-  document.getElementById("lidarInfo").innerText =
-    "LiDAR: no valid points";
-} else {
-  document.getElementById("lidarInfo").innerText =
-    "LiDAR points: " + validCount;
-}
-
-document.getElementById("distanceInfo").innerText =
-  "Front: " + showDistance(frontDistance) +
-  " | Left: " + showDistance(leftDistance) +
-  " | Right: " + showDistance(rightDistance) +
-  " | Closest: " + showDistance(closest);
+      document.getElementById("distanceInfo").innerText =
+        "Front: " + showDistance(frontDistance) +
+        " | Left: " + showDistance(leftDistance) +
+        " | Right: " + showDistance(rightDistance) +
+        " | Closest: " + showDistance(closest);
     }
 
     const scanTopic = new ROSLIB.Topic({
@@ -425,28 +376,107 @@ document.getElementById("distanceInfo").innerText =
 
     // ================= Odometry Display =================
 
-const odomTopic = new ROSLIB.Topic({
-  ros: ros,
-  name: "/odom",
-  messageType: "nav_msgs/Odometry"
-});
+    const odomTopic = new ROSLIB.Topic({
+      ros: ros,
+      name: "/odom",
+      messageType: "nav_msgs/Odometry"
+    });
 
-odomTopic.subscribe(function(msg) {
-  const x = msg.pose.pose.position.x;
-  const y = msg.pose.pose.position.y;
+    odomTopic.subscribe(function(msg) {
+      const x = msg.pose.pose.position.x;
+      const y = msg.pose.pose.position.y;
 
-  const qz = msg.pose.pose.orientation.z;
-  const qw = msg.pose.pose.orientation.w;
+      const qz = msg.pose.pose.orientation.z;
+      const qw = msg.pose.pose.orientation.w;
 
-  const headingRad = 2.0 * Math.atan2(qz, qw);
-  const headingDeg = headingRad * 180.0 / Math.PI;
+      const headingRad = 2.0 * Math.atan2(qz, qw);
+      const headingDeg = headingRad * 180.0 / Math.PI;
 
-  document.getElementById("odomInfo").innerText =
-    "Odom X: " + x.toFixed(3) + " m" +
-    " | Odom Y: " + y.toFixed(3) + " m" +
-    " | Heading: " + headingDeg.toFixed(1) + "°";
-});
+      document.getElementById("odomInfo").innerText =
+        "Odom X: " + x.toFixed(3) + " m" +
+        " | Odom Y: " + y.toFixed(3) + " m" +
+        " | Heading: " + headingDeg.toFixed(1) + "°";
+    });
 
+    // ================= SLAM Map Display =================
+
+    const mapCanvas = document.getElementById("mapCanvas");
+    const mapCtx = mapCanvas.getContext("2d");
+
+    const mapTopic = new ROSLIB.Topic({
+      ros: ros,
+      name: "/map",
+      messageType: "nav_msgs/OccupancyGrid"
+    });
+
+    mapTopic.subscribe(function(msg) {
+      drawMap(msg);
+    });
+
+    function drawMap(msg) {
+      const width = msg.info.width;
+      const height = msg.info.height;
+      const resolution = msg.info.resolution;
+
+      const imageData = mapCtx.createImageData(width, height);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const mapIndex = x + y * width;
+          const pixelIndex = (x + (height - y - 1) * width) * 4;
+
+          const value = msg.data[mapIndex];
+
+          let color;
+
+          if (value === -1) {
+            color = 120;   // unknown = gray
+          } else if (value === 0) {
+            color = 255;   // free = white
+          } else {
+            color = 0;     // wall/obstacle = black
+          }
+
+          imageData.data[pixelIndex + 0] = color;
+          imageData.data[pixelIndex + 1] = color;
+          imageData.data[pixelIndex + 2] = color;
+          imageData.data[pixelIndex + 3] = 255;
+        }
+      }
+
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = width;
+      tempCanvas.height = height;
+
+      const tempCtx = tempCanvas.getContext("2d");
+      tempCtx.putImageData(imageData, 0, 0);
+
+      mapCtx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+      mapCtx.imageSmoothingEnabled = false;
+
+      const mapScale = Math.min(
+        mapCanvas.width / width,
+        mapCanvas.height / height
+      );
+
+      const drawWidth = width * mapScale;
+      const drawHeight = height * mapScale;
+
+      const offsetX = (mapCanvas.width - drawWidth) / 2;
+      const offsetY = (mapCanvas.height - drawHeight) / 2;
+
+      mapCtx.drawImage(
+        tempCanvas,
+        offsetX,
+        offsetY,
+        drawWidth,
+        drawHeight
+      );
+
+      document.getElementById("mapInfo").innerText =
+        "Map: " + width + " x " + height +
+        " | Resolution: " + resolution.toFixed(3) + " m/cell";
+    }
   </script>
 </body>
 </html>
