@@ -3,23 +3,22 @@
 #include "Odometry.h"
 
 // ===================== Robot Mode =====================
+
 enum RobotMode {
   MODE_STOP,
   MODE_MANUAL,
   MODE_SQUARE_PATH
 };
 
-// Default mode: manual control from ROS 2
 RobotMode currentMode = MODE_MANUAL;
 
-
 // ===================== Square Path =====================
+
 struct Point {
   float x;
   float y;
 };
 
-// 12 inch square
 Point path[] = {
   {0.0, 0.0},
   {12.0, 0.0},
@@ -36,56 +35,46 @@ bool pathDone = false;
 
 float targetHeading_rad = 0.0;
 
-
 // ===================== Manual Control =====================
+
 float linear_m_s = 0.0;
 float angular_rad_s = 0.0;
 
 String inputString = "";
 
+// ROS/web sends commands repeatedly.
+// If command stops coming, robot stops fast.
 const unsigned long commandTimeout_ms = 500;
 unsigned long lastCommandTime = 0;
 
-
 // ===================== Motor Targets =====================
+
 float rightTarget = 0.0;
 float leftTarget = 0.0;
 
-// global varies
+// ===================== Timing =====================
+
 unsigned long lastControlTime = 0;
 unsigned long lastOdomPrintTime = 0;
-const unsigned long odomPrintPeriod_ms = 100;
-
-// ===================== Get Heading of Current Segment =====================
-float getSegmentHeading(int index) {
-  Point start = path[index];
-  Point end   = path[index + 1];
-
-  float dx = end.x - start.x;
-  float dy = end.y - start.y;
-
-  return atan2(dy, dx);
-}
-
 
 // ===================== Setup =====================
+
 void setup() {
   Serial.begin(115200);
 
   Motor_Init();
+  ResetRoverOdometry();
 
   delay(1000);
 
-  // Keep only small startup message.
-  // Remove this too later if you want completely clean serial.
   Serial.println("READY");
 
   lastControlTime = millis();
   lastCommandTime = millis();
 }
 
-
 // ===================== Main Loop =====================
+
 void loop() {
   unsigned long currentTime = millis();
 
@@ -97,10 +86,8 @@ void loop() {
     Motor_UpdateSpeed(&Motor1);
     Motor_UpdateSpeed(&Motor2);
 
-    UpdateRoverOdometry(); // odo update
-    PrintOdometry(); // print call
+    UpdateRoverOdometry();
 
-    // Safety stop if manual command is lost
     if (currentMode == MODE_MANUAL) {
       if (currentTime - lastCommandTime > commandTimeout_ms) {
         linear_m_s = 0.0;
@@ -129,17 +116,24 @@ void loop() {
 
     Motor_Go(&Motor1);
     Motor_Go(&Motor2);
+
+    PrintOdometry();
   }
 }
 
-
 // ===================== Read Serial Command =====================
+
 void ReadSerialCommand() {
   while (Serial.available() > 0) {
     char c = Serial.read();
 
-    if (c == '\n') {
-      ParseCommand(inputString);
+    if (c == '\n' || c == '\r') {
+      inputString.trim();
+
+      if (inputString.length() > 0) {
+        ParseCommand(inputString);
+      }
+
       inputString = "";
     } else {
       inputString += c;
@@ -147,8 +141,8 @@ void ReadSerialCommand() {
   }
 }
 
-
 // ===================== Parse Serial Command =====================
+
 void ParseCommand(String command) {
   command.trim();
 
@@ -156,7 +150,12 @@ void ParseCommand(String command) {
     return;
   }
 
-  // Mode commands
+  if (command == "RESET_ODOM") {
+    ResetRoverOdometry();
+    ResetMotorPID();
+    return;
+  }
+
   if (command == "MODE:MANUAL") {
     currentMode = MODE_MANUAL;
     linear_m_s = 0.0;
@@ -164,6 +163,7 @@ void ParseCommand(String command) {
     rightTarget = 0.0;
     leftTarget = 0.0;
     ResetMotorPID();
+    ReseedRoverOdometry();
     return;
   }
 
@@ -184,8 +184,6 @@ void ParseCommand(String command) {
     return;
   }
 
-  // Manual velocity command format:
-  // V:0.20,W:0.00
   int vIndex = command.indexOf("V:");
   int wIndex = command.indexOf(",W:");
 
@@ -203,23 +201,31 @@ void ParseCommand(String command) {
   lastCommandTime = millis();
 }
 
-
 // ===================== Manual Control Logic =====================
+//
+// ROS/Web convention:
+// V positive = forward
+// W positive = left
+//
+// Current robot physical result:
+// V:-0.08 moves physical forward.
+// V: 0.08 moves physical backward.
+//
+// Keep this for now because your 1-meter test is very good.
+
 void RunManualControl() {
-  // ROS 2 linear velocity is m/s
-  // Motor control uses inches/second
-  float linear_in_s = linear_m_s * 39.37;
+  float forward_in_s = linear_m_s * 39.37;
+  float turn_in_s = angular_rad_s * wheelDistance_in * 0.5;
 
-  rightTarget = linear_in_s - angular_rad_s * wheelDistance_in / 2.0;
-  leftTarget  = linear_in_s + angular_rad_s * wheelDistance_in / 2.0;
+  rightTarget = -forward_in_s + turn_in_s;
+  leftTarget  =  forward_in_s + turn_in_s;
 
-  // Keep speed safe for first test
-  rightTarget = constrain(rightTarget, -5.0, 5.0);
-  leftTarget  = constrain(leftTarget, -5.0, 5.0);
+  rightTarget = constrain(rightTarget, -maxWheelSpeed_in_s, maxWheelSpeed_in_s);
+  leftTarget  = constrain(leftTarget, -maxWheelSpeed_in_s, maxWheelSpeed_in_s);
 }
 
-
 // ===================== Square Path Logic =====================
+
 void RunSquarePath() {
   if (turningMode) {
     RunTurnMode();
@@ -228,8 +234,8 @@ void RunSquarePath() {
   }
 }
 
-
 // ===================== Turn Mode =====================
+
 void RunTurnMode() {
   float headingError = wrapAngle(targetHeading_rad - roverHeading_rad);
 
@@ -238,22 +244,23 @@ void RunTurnMode() {
     rightTarget = 0.0;
     leftTarget = 0.0;
     ResetMotorPID();
+    ReseedRoverOdometry();
     return;
   }
 
   if (headingError > 0) {
-    // Turn left in place
+    // Turn left
     rightTarget = turnSpeed_in_s;
-    leftTarget  = -turnSpeed_in_s;
-  } else {
-    // Turn right in place
-    rightTarget = -turnSpeed_in_s;
     leftTarget  = turnSpeed_in_s;
+  } else {
+    // Turn right
+    rightTarget = -turnSpeed_in_s;
+    leftTarget  = -turnSpeed_in_s;
   }
 }
 
-
 // ===================== Straight Mode =====================
+
 void RunStraightMode() {
   Point startPoint = path[segmentIndex];
   Point endPoint   = path[segmentIndex + 1];
@@ -285,6 +292,7 @@ void RunStraightMode() {
       rightTarget = 0.0;
       leftTarget = 0.0;
       ResetMotorPID();
+      ReseedRoverOdometry();
     }
 
     return;
@@ -295,16 +303,20 @@ void RunStraightMode() {
 
   float correction = headingGain * headingError;
 
-  rightTarget = pathSpeed_in_s + correction;
-  leftTarget  = pathSpeed_in_s - correction;
+  // Forward in this robot motor convention:
+  // right negative, left positive
+  rightTarget = -pathSpeed_in_s - correction;
+  leftTarget  =  pathSpeed_in_s + correction;
 
-  rightTarget = constrain(rightTarget, 0.0, 3.0);
-  leftTarget  = constrain(leftTarget, 0.0, 3.0);
+  rightTarget = constrain(rightTarget, -3.0, 3.0);
+  leftTarget  = constrain(leftTarget, -3.0, 3.0);
 }
 
-
 // ===================== Reset Square Path =====================
+
 void ResetSquarePath() {
+  ResetRoverOdometry();
+
   segmentIndex = 0;
   turningMode = false;
   pathDone = false;
@@ -312,12 +324,27 @@ void ResetSquarePath() {
 
   rightTarget = 0.0;
   leftTarget = 0.0;
+}
 
-  // Optional later if your Odometry files support this:
-  // ResetRoverOdometry();
+// ===================== Segment Heading =====================
+
+float getSegmentHeading(int index) {
+  Point start = path[index];
+  Point end   = path[index + 1];
+
+  float dx = end.x - start.x;
+  float dy = end.y - start.y;
+
+  return atan2(dy, dx);
 }
 
 // ===================== Print Odometry =====================
+//
+// ROS bridge needs exactly:
+// ODOM:x,y,theta
+//
+// Do not add debug text after theta.
+
 void PrintOdometry() {
   unsigned long currentTime = millis();
 
@@ -329,11 +356,12 @@ void PrintOdometry() {
 
   float x_m = roverX_in * 0.0254;
   float y_m = roverY_in * 0.0254;
+  float thetaWrapped = wrapAngle(roverHeading_rad);
 
   Serial.print("ODOM:");
   Serial.print(x_m, 3);
   Serial.print(",");
   Serial.print(y_m, 3);
   Serial.print(",");
-  Serial.println(roverHeading_rad, 3);
+  Serial.println(thetaWrapped, 3);
 }

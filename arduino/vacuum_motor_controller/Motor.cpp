@@ -1,180 +1,221 @@
 #include "Motor.h"
 
-DC_Motor Motor1;
-DC_Motor Motor2;
+// ===================== Encoder Objects =====================
+//
+// Encoder direction is corrected here, like encoderInvert in class code.
+//
+// Based on your stable test:
+// Right encoder normal
+// Left encoder inverted
 
-void Motor_Init() {
-  // Right motor
-  Motor1.PWM = RIGHT_PWM;
-  Motor1.IN1 = RIGHT_IN1;
-  Motor1.IN2 = RIGHT_IN2;
-  Motor1.encoderA = RIGHT_ENCODER_A;
-  Motor1.encoderB = RIGHT_ENCODER_B;
-  Motor1.encoderSign = +1;
+EncoderCounter4x RightEncoder;
+EncoderCounter4x LeftEncoder;
 
-  // Left motor
-  Motor2.PWM = LEFT_PWM;
-  Motor2.IN1 = LEFT_IN1;
-  Motor2.IN2 = LEFT_IN2;
-  Motor2.encoderA = LEFT_ENCODER_A;
-  Motor2.encoderB = LEFT_ENCODER_B;
-  Motor2.encoderSign = -1;
+// ===================== Motor Objects =====================
+//
+// Motor direction is separate from encoder direction.
+// Keep both motorSign = 1 because this was your stable setup.
+// We fix "W forward" in RunManualControl(), not by randomly changing signs.
 
-  DC_Motor* motors[2] = {&Motor1, &Motor2};
+Motor Motor1 = {
+  RIGHT_PWM,
+  RIGHT_IN1,
+  RIGHT_IN2,
+  &RightEncoder,
+  0,
+  0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0,
+  -1
+};
 
-  for (int i = 0; i < 2; i++) {
-    DC_Motor* motor = motors[i];
+Motor Motor2 = {
+  LEFT_PWM,
+  LEFT_IN1,
+  LEFT_IN2,
+  &LeftEncoder,
+  0,
+  0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0,
+  1
+};
 
-    motor->encoderCount = 0;
-    motor->lastEncoderCount = 0;
+// ===================== Encoder ISR Wrappers =====================
 
-    motor->rawSpeed_in_s = 0.0;
-    motor->filteredSpeed_in_s = 0.0;
-
-    motor->error = 0.0;
-    motor->lastError = 0.0;
-    motor->integral = 0.0;
-
-    motor->u_pwm = 0;
-
-    pinMode(motor->PWM, OUTPUT);
-    pinMode(motor->IN1, OUTPUT);
-    pinMode(motor->IN2, OUTPUT);
-
-    pinMode(motor->encoderA, INPUT_PULLUP);
-    pinMode(motor->encoderB, INPUT_PULLUP);
-
-    Motor_Stop(motor);
-  }
-
-  attachInterrupt(digitalPinToInterrupt(RIGHT_ENCODER_A), RightEncoderISR_A, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(LEFT_ENCODER_A), LeftEncoderISR_A, CHANGE);
+void rightEncoderISR_A() {
+  RightEncoder.onInterruptA();
 }
 
+void rightEncoderISR_B() {
+  RightEncoder.onInterruptB();
+}
 
-void Motor_UpdateSpeed(DC_Motor* motor) {
-  long currentCount = motor->encoderCount;
+void leftEncoderISR_A() {
+  LeftEncoder.onInterruptA();
+}
+
+void leftEncoderISR_B() {
+  LeftEncoder.onInterruptB();
+}
+
+// ===================== Motor Init =====================
+
+void Motor_Init() {
+  pinMode(Motor1.pwmPin, OUTPUT);
+  pinMode(Motor1.in1Pin, OUTPUT);
+  pinMode(Motor1.in2Pin, OUTPUT);
+
+  pinMode(Motor2.pwmPin, OUTPUT);
+  pinMode(Motor2.in1Pin, OUTPUT);
+  pinMode(Motor2.in2Pin, OUTPUT);
+
+  // Right encoder: normal direction
+  RightEncoder.init(RIGHT_ENCODER_A, RIGHT_ENCODER_B, true);
+
+  // Left encoder: inverted direction
+  LeftEncoder.init(LEFT_ENCODER_A, LEFT_ENCODER_B, true);
+
+  attachInterrupt(digitalPinToInterrupt(RIGHT_ENCODER_A), rightEncoderISR_A, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(RIGHT_ENCODER_B), rightEncoderISR_B, CHANGE);
+
+  attachInterrupt(digitalPinToInterrupt(LEFT_ENCODER_A), leftEncoderISR_A, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(LEFT_ENCODER_B), leftEncoderISR_B, CHANGE);
+
+  ResetMotorPID();
+
+  Motor1.encoder->resetCount();
+  Motor2.encoder->resetCount();
+
+  Motor1.lastEncoderCount = 0;
+  Motor2.lastEncoderCount = 0;
+
+  Motor_Go(&Motor1);
+  Motor_Go(&Motor2);
+}
+
+// ===================== Speed Feedback =====================
+
+void Motor_UpdateSpeed(Motor* motor) {
+  long currentCount;
+  unsigned long edgeUs;
+
+  motor->encoder->snapshot(currentCount, edgeUs);
+
   long deltaCount = currentCount - motor->lastEncoderCount;
   motor->lastEncoderCount = currentCount;
 
-  float dt = controlPeriod_ms / 1000.0;
-
-  float rev = (deltaCount * motor->encoderSign) / countsPerRev;
+  float rev = (float)deltaCount / countsPerRev;
   float distance_in = rev * wheelCircumference_in;
 
-  motor->rawSpeed_in_s = distance_in / dt;
+  float dt_s = controlPeriod_ms / 1000.0;
+
+  motor->measuredSpeed_in_s = distance_in / dt_s;
+
+  // If encoder has not moved recently, force speed to zero.
+  // This copies the class-code velocity-zero-timeout idea.
+  if (edgeUs != 0 && (micros() - edgeUs) > 50000UL) {
+    motor->measuredSpeed_in_s = 0.0;
+  }
 
   motor->filteredSpeed_in_s =
-    alpha * motor->rawSpeed_in_s + (1.0 - alpha) * motor->filteredSpeed_in_s;
+    alpha * motor->measuredSpeed_in_s +
+    (1.0 - alpha) * motor->filteredSpeed_in_s;
 }
 
+// ===================== Speed PID =====================
+void Motor_SpeedControl(Motor* motor, float targetSpeed_in_s) {
+  motor->targetSpeed_in_s = targetSpeed_in_s;
 
-void Motor_SpeedControl(DC_Motor* motor, float targetSpeed) {
-  float dt = controlPeriod_ms / 1000.0;
-
-  if (abs(targetSpeed) <= 0.05) {
-    motor->u_pwm = 0;
-    motor->integral = 0.0;
-    motor->lastError = 0.0;
+  if (abs(targetSpeed_in_s) < 0.01) {
     motor->error = 0.0;
+    motor->lastError = 0.0;
+    motor->integral = 0.0;
+    motor->pwmOutput = 0;
     return;
   }
 
-  int directionSign;
+  float targetAbs = abs(targetSpeed_in_s);
+  float speedAbs = abs(motor->filteredSpeed_in_s);
 
-  if (targetSpeed > 0) {
-    directionSign = 1;
-  } else {
-    directionSign = -1;
-  }
+  motor->error = targetAbs - speedAbs;
 
-  float targetMag = abs(targetSpeed);
-  float speedMag  = abs(motor->filteredSpeed_in_s);
+  float dt_s = controlPeriod_ms / 1000.0;
 
-  motor->error = targetMag - speedMag;
+  motor->integral += motor->error * dt_s;
+  motor->integral = constrain(motor->integral, -20.0, 20.0);
 
-  motor->integral += motor->error * dt;
-  motor->integral = constrain(motor->integral, -15.0, 15.0);
-
-  float derivative = (motor->error - motor->lastError) / dt;
-
-  float pidOutput = Kp * motor->error + Ki * motor->integral + Kd * derivative;
-
-  int motorBasePWM;
-
-  if (motor == &Motor1) {
-    motorBasePWM = rightBasePWM;
-  } else {
-    motorBasePWM = leftBasePWM;
-  }
-
-  float pwmMagnitude = motorBasePWM + pidOutput;
-  pwmMagnitude = constrain(pwmMagnitude, minPWM, maxPWM);
-
-  motor->u_pwm = directionSign * (int)pwmMagnitude;
-
+  float derivative = (motor->error - motor->lastError) / dt_s;
   motor->lastError = motor->error;
-}
 
+  float feedForward = targetAbs * pwmPerInchPerSec;
 
-void Motor_Go(DC_Motor* motor) {
-  if (motor->u_pwm == 0) {
-    Motor_Stop(motor);
-    return;
+  float output =
+    feedForward +
+    Kp * motor->error +
+    Ki * motor->integral +
+    Kd * derivative;
+
+  int pwm = (int)output;
+
+  pwm = constrain(pwm, minPWM, maxPWM);
+
+  if (targetSpeed_in_s < 0) {
+    pwm = -pwm;
   }
 
-  int pwmValue = abs(motor->u_pwm);
+  motor->pwmOutput = pwm;
+}
+// ===================== Apply Motor Output =====================
 
-  if (motor->u_pwm > 0) {
-    digitalWrite(motor->IN1, LOW);
-    digitalWrite(motor->IN2, HIGH);
+void Motor_Go(Motor* motor) {
+  int pwm = motor->pwmOutput * motor->motorSign;
+
+  if (pwm > 0) {
+    digitalWrite(motor->in1Pin, HIGH);
+    digitalWrite(motor->in2Pin, LOW);
+    analogWrite(motor->pwmPin, constrain(pwm, 0, 255));
+  }
+  else if (pwm < 0) {
+    digitalWrite(motor->in1Pin, LOW);
+    digitalWrite(motor->in2Pin, HIGH);
+    analogWrite(motor->pwmPin, constrain(-pwm, 0, 255));
   }
   else {
-    digitalWrite(motor->IN1, HIGH);
-    digitalWrite(motor->IN2, LOW);
+    digitalWrite(motor->in1Pin, LOW);
+    digitalWrite(motor->in2Pin, LOW);
+    analogWrite(motor->pwmPin, 0);
   }
-
-  analogWrite(motor->PWM, pwmValue);
 }
 
-
-void Motor_Stop(DC_Motor* motor) {
-  analogWrite(motor->PWM, 0);
-  digitalWrite(motor->IN1, LOW);
-  digitalWrite(motor->IN2, LOW);
-}
-
+// ===================== Reset PID =====================
 
 void ResetMotorPID() {
-  Motor1.integral = 0.0;
-  Motor1.lastError = 0.0;
   Motor1.error = 0.0;
+  Motor1.lastError = 0.0;
+  Motor1.integral = 0.0;
+  Motor1.pwmOutput = 0;
+  Motor1.targetSpeed_in_s = 0.0;
+  Motor1.filteredSpeed_in_s = 0.0;
+  Motor1.measuredSpeed_in_s = 0.0;
+  Motor1.lastEncoderCount = Motor1.encoder ? Motor1.encoder->getCount() : 0;
 
-  Motor2.integral = 0.0;
-  Motor2.lastError = 0.0;
   Motor2.error = 0.0;
-}
-
-
-void RightEncoderISR_A() {
-  bool A = digitalRead(RIGHT_ENCODER_A);
-  bool B = digitalRead(RIGHT_ENCODER_B);
-
-  if (A == B) {
-    Motor1.encoderCount++;
-  } else {
-    Motor1.encoderCount--;
-  }
-}
-
-
-void LeftEncoderISR_A() {
-  bool A = digitalRead(LEFT_ENCODER_A);
-  bool B = digitalRead(LEFT_ENCODER_B);
-
-  if (A == B) {
-    Motor2.encoderCount++;
-  } else {
-    Motor2.encoderCount--;
-  }
+  Motor2.lastError = 0.0;
+  Motor2.integral = 0.0;
+  Motor2.pwmOutput = 0;
+  Motor2.targetSpeed_in_s = 0.0;
+  Motor2.filteredSpeed_in_s = 0.0;
+  Motor2.measuredSpeed_in_s = 0.0;
+  Motor2.lastEncoderCount = Motor2.encoder ? Motor2.encoder->getCount() : 0;
 }
