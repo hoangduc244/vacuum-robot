@@ -304,7 +304,7 @@
 
         const angle = msg.angle_min + i * msg.angle_increment;
 
-        // Rotate LiDAR display so website front matches robot front.
+        // Rotate LiDAR display so website front matches robot front
         const displayAngle = angle - Math.PI / 2;
 
         const x = range * Math.cos(displayAngle);
@@ -376,6 +376,8 @@
 
     // ================= Odometry Display =================
 
+    let latestOdom = null;
+
     const odomTopic = new ROSLIB.Topic({
       ros: ros,
       name: "/odom",
@@ -391,6 +393,12 @@
 
       const headingRad = 2.0 * Math.atan2(qz, qw);
       const headingDeg = headingRad * 180.0 / Math.PI;
+
+      latestOdom = {
+        x: x,
+        y: y,
+        heading: headingRad
+      };
 
       document.getElementById("odomInfo").innerText =
         "Odom X: " + x.toFixed(3) + " m" +
@@ -473,9 +481,102 @@
         drawHeight
       );
 
+      drawRobotOnMap(msg.info, offsetX, offsetY, mapScale);
+
       document.getElementById("mapInfo").innerText =
         "Map: " + width + " x " + height +
         " | Resolution: " + resolution.toFixed(3) + " m/cell";
+    }
+
+    function drawRobotOnMap(mapInfo, offsetX, offsetY, mapScale) {
+      if (latestOdom === null) {
+        return;
+      }
+
+      const resolution = mapInfo.resolution;
+      const originX = mapInfo.origin.position.x;
+      const originY = mapInfo.origin.position.y;
+      const mapHeight = mapInfo.height;
+
+      const robotMapX = (latestOdom.x - originX) / resolution;
+      const robotMapY = (latestOdom.y - originY) / resolution;
+
+      const robotCanvasX = offsetX + robotMapX * mapScale;
+      const robotCanvasY = offsetY + (mapHeight - robotMapY) * mapScale;
+
+      const heading = latestOdom.heading;
+
+      const arrowLength = 35;
+      const sideLength = 25;
+
+      // Front direction
+      const frontX = robotCanvasX + Math.cos(heading) * arrowLength;
+      const frontY = robotCanvasY - Math.sin(heading) * arrowLength;
+
+      // Back direction
+      const backX = robotCanvasX - Math.cos(heading) * arrowLength;
+      const backY = robotCanvasY + Math.sin(heading) * arrowLength;
+
+      // Left direction
+      const leftX = robotCanvasX + Math.cos(heading + Math.PI / 2) * sideLength;
+      const leftY = robotCanvasY - Math.sin(heading + Math.PI / 2) * sideLength;
+
+      // Right direction
+      const rightX = robotCanvasX + Math.cos(heading - Math.PI / 2) * sideLength;
+      const rightY = robotCanvasY - Math.sin(heading - Math.PI / 2) * sideLength;
+
+      // Robot center
+      mapCtx.fillStyle = "#4da6ff";
+      mapCtx.beginPath();
+      mapCtx.arc(robotCanvasX, robotCanvasY, 7, 0, 2 * Math.PI);
+      mapCtx.fill();
+
+      // Front arrow
+      mapCtx.strokeStyle = "#ff3333";
+      mapCtx.lineWidth = 4;
+      mapCtx.beginPath();
+      mapCtx.moveTo(robotCanvasX, robotCanvasY);
+      mapCtx.lineTo(frontX, frontY);
+      mapCtx.stroke();
+
+      // Back line
+      mapCtx.strokeStyle = "#aaaaaa";
+      mapCtx.lineWidth = 2;
+      mapCtx.beginPath();
+      mapCtx.moveTo(robotCanvasX, robotCanvasY);
+      mapCtx.lineTo(backX, backY);
+      mapCtx.stroke();
+
+      // Left line
+      mapCtx.strokeStyle = "#00ff88";
+      mapCtx.lineWidth = 2;
+      mapCtx.beginPath();
+      mapCtx.moveTo(robotCanvasX, robotCanvasY);
+      mapCtx.lineTo(leftX, leftY);
+      mapCtx.stroke();
+
+      // Right line
+      mapCtx.strokeStyle = "#ffaa00";
+      mapCtx.lineWidth = 2;
+      mapCtx.beginPath();
+      mapCtx.moveTo(robotCanvasX, robotCanvasY);
+      mapCtx.lineTo(rightX, rightY);
+      mapCtx.stroke();
+
+      // Labels
+      mapCtx.font = "14px Arial";
+
+      mapCtx.fillStyle = "#ff3333";
+      mapCtx.fillText("Front", frontX + 5, frontY);
+
+      mapCtx.fillStyle = "#aaaaaa";
+      mapCtx.fillText("Back", backX + 5, backY);
+
+      mapCtx.fillStyle = "#00ff88";
+      mapCtx.fillText("Left", leftX + 5, leftY);
+
+      mapCtx.fillStyle = "#ffaa00";
+      mapCtx.fillText("Right", rightX + 5, rightY);
     }
   </script>
 </body>
