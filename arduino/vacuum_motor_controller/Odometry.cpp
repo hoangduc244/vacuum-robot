@@ -53,7 +53,7 @@ void UpdateRoverOdometry() {
   float dRight = rightRev * wheelCircumference_in;
   float dLeft  = leftRev  * wheelCircumference_in;
 
-  float dCenter = (dRight + dLeft) * 0.5;
+  float dCenter = -(dRight + dLeft) * 0.5;
 
   // Positive theta = CCW / physical left turn.
   // Same formula as class RobotKinematics:

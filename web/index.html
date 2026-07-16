@@ -178,11 +178,15 @@
 
       activeKey = key;
 
+      // IMPORTANT:
+      // Arduino/PID stays unchanged.
+      // Only web keyboard direction is flipped.
+      // W now sends negative linear.x because that is physical forward for your robot.
       if (key === "w") {
-        startCommand(0.05, 0.0);
+        startCommand(-0.05, 0.0);
       }
       else if (key === "s") {
-        startCommand(-0.05, 0.0);
+        startCommand(0.05, 0.0);
       }
       else if (key === "a") {
         startCommand(0.0, 0.3);
@@ -297,7 +301,6 @@
           continue;
         }
 
-        // Limit drawing to 3 meters so room is easier to see
         if (range > 3.0) {
           continue;
         }
@@ -438,11 +441,11 @@
           let color;
 
           if (value === -1) {
-            color = 120;   // unknown = gray
+            color = 120;
           } else if (value === 0) {
-            color = 255;   // free = white
+            color = 255;
           } else {
-            color = 0;     // wall/obstacle = black
+            color = 0;
           }
 
           imageData.data[pixelIndex + 0] = color;
@@ -509,29 +512,23 @@
       const arrowLength = 35;
       const sideLength = 25;
 
-      // Front direction
       const frontX = robotCanvasX + Math.cos(heading) * arrowLength;
       const frontY = robotCanvasY - Math.sin(heading) * arrowLength;
 
-      // Back direction
       const backX = robotCanvasX - Math.cos(heading) * arrowLength;
       const backY = robotCanvasY + Math.sin(heading) * arrowLength;
 
-      // Left direction
       const leftX = robotCanvasX + Math.cos(heading + Math.PI / 2) * sideLength;
       const leftY = robotCanvasY - Math.sin(heading + Math.PI / 2) * sideLength;
 
-      // Right direction
       const rightX = robotCanvasX + Math.cos(heading - Math.PI / 2) * sideLength;
       const rightY = robotCanvasY - Math.sin(heading - Math.PI / 2) * sideLength;
 
-      // Robot center
       mapCtx.fillStyle = "#4da6ff";
       mapCtx.beginPath();
       mapCtx.arc(robotCanvasX, robotCanvasY, 7, 0, 2 * Math.PI);
       mapCtx.fill();
 
-      // Front arrow
       mapCtx.strokeStyle = "#ff3333";
       mapCtx.lineWidth = 4;
       mapCtx.beginPath();
@@ -539,7 +536,6 @@
       mapCtx.lineTo(frontX, frontY);
       mapCtx.stroke();
 
-      // Back line
       mapCtx.strokeStyle = "#aaaaaa";
       mapCtx.lineWidth = 2;
       mapCtx.beginPath();
@@ -547,7 +543,6 @@
       mapCtx.lineTo(backX, backY);
       mapCtx.stroke();
 
-      // Left line
       mapCtx.strokeStyle = "#00ff88";
       mapCtx.lineWidth = 2;
       mapCtx.beginPath();
@@ -555,7 +550,6 @@
       mapCtx.lineTo(leftX, leftY);
       mapCtx.stroke();
 
-      // Right line
       mapCtx.strokeStyle = "#ffaa00";
       mapCtx.lineWidth = 2;
       mapCtx.beginPath();
@@ -563,7 +557,6 @@
       mapCtx.lineTo(rightX, rightY);
       mapCtx.stroke();
 
-      // Labels
       mapCtx.font = "14px Arial";
 
       mapCtx.fillStyle = "#ff3333";
