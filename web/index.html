@@ -89,7 +89,7 @@
       <canvas id="lidarCanvas" width="500" height="500"></canvas>
       <div id="lidarInfo">Waiting for /scan...</div>
       <div id="distanceInfo">Front: -- | Left: -- | Right: -- | Closest: --</div>
-      <div id="odomInfo">Odom X: -- | Odom Y: -- | Heading: --</div>
+      <div id="odomInfo">Odom X: -- | Odom Y: -- | Heading: -- | Map TF: waiting</div>
     </div>
 
     <div class="panel">
@@ -178,10 +178,8 @@
 
       activeKey = key;
 
-      // IMPORTANT:
       // Arduino/PID stays unchanged.
-      // Only web keyboard direction is flipped.
-      // W now sends negative linear.x because that is physical forward for your robot.
+      // W sends negative linear.x because that is physical forward for your robot.
       if (key === "w") {
         startCommand(-0.05, 0.0);
       }
@@ -377,9 +375,106 @@
       drawScan(msg);
     });
 
-    // ================= Odometry Display =================
+    // ================= Odometry Display + TF Robot Pose =================
 
     let latestOdom = null;
+    let latestMapPose = null;
+
+    const tfStore = {};
+
+    function normalizeFrame(frame) {
+      if (frame.startsWith("/")) {
+        return frame.substring(1);
+      }
+      return frame;
+    }
+
+    function quatToYaw(q) {
+      return Math.atan2(
+        2.0 * (q.w * q.z + q.x * q.y),
+        1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+      );
+    }
+
+    function normalizeYaw(angle) {
+      while (angle > Math.PI) {
+        angle -= 2.0 * Math.PI;
+      }
+
+      while (angle < -Math.PI) {
+        angle += 2.0 * Math.PI;
+      }
+
+      return angle;
+    }
+
+    function saveTransform(tf) {
+      const parent = normalizeFrame(tf.header.frame_id);
+      const child = normalizeFrame(tf.child_frame_id);
+      const key = parent + "->" + child;
+
+      tfStore[key] = {
+        x: tf.transform.translation.x,
+        y: tf.transform.translation.y,
+        yaw: quatToYaw(tf.transform.rotation)
+      };
+    }
+
+    function compose2D(a, b) {
+      // result = a * b
+      const cosA = Math.cos(a.yaw);
+      const sinA = Math.sin(a.yaw);
+
+      return {
+        x: a.x + cosA * b.x - sinA * b.y,
+        y: a.y + sinA * b.x + cosA * b.y,
+        yaw: normalizeYaw(a.yaw + b.yaw)
+      };
+    }
+
+    function updateRobotPoseFromTF() {
+      const direct = tfStore["map->base_link"];
+
+      if (direct) {
+        latestMapPose = direct;
+        return;
+      }
+
+      const mapToOdom = tfStore["map->odom"];
+      const odomToBase = tfStore["odom->base_link"];
+
+      if (mapToOdom && odomToBase) {
+        latestMapPose = compose2D(mapToOdom, odomToBase);
+      }
+    }
+
+    const tfTopic = new ROSLIB.Topic({
+      ros: ros,
+      name: "/tf",
+      messageType: "tf2_msgs/TFMessage"
+    });
+
+    tfTopic.subscribe(function(msg) {
+      for (let i = 0; i < msg.transforms.length; i++) {
+        saveTransform(msg.transforms[i]);
+      }
+
+      updateRobotPoseFromTF();
+    });
+
+    const tfStaticTopic = new ROSLIB.Topic({
+      ros: ros,
+      name: "/tf_static",
+      messageType: "tf2_msgs/TFMessage"
+    });
+
+    tfStaticTopic.subscribe(function(msg) {
+      for (let i = 0; i < msg.transforms.length; i++) {
+        saveTransform(msg.transforms[i]);
+      }
+
+      updateRobotPoseFromTF();
+    });
 
     const odomTopic = new ROSLIB.Topic({
       ros: ros,
@@ -391,10 +486,8 @@
       const x = msg.pose.pose.position.x;
       const y = msg.pose.pose.position.y;
 
-      const qz = msg.pose.pose.orientation.z;
-      const qw = msg.pose.pose.orientation.w;
-
-      const headingRad = 2.0 * Math.atan2(qz, qw);
+      const q = msg.pose.pose.orientation;
+      const headingRad = quatToYaw(q);
       const headingDeg = headingRad * 180.0 / Math.PI;
 
       latestOdom = {
@@ -403,10 +496,22 @@
         heading: headingRad
       };
 
+      let mapText = " | Map TF: waiting";
+
+      if (latestMapPose !== null) {
+        const mapHeadingDeg = latestMapPose.yaw * 180.0 / Math.PI;
+
+        mapText =
+          " | Map X: " + latestMapPose.x.toFixed(3) + " m" +
+          " | Map Y: " + latestMapPose.y.toFixed(3) + " m" +
+          " | Map Heading: " + mapHeadingDeg.toFixed(1) + " deg";
+      }
+
       document.getElementById("odomInfo").innerText =
         "Odom X: " + x.toFixed(3) + " m" +
         " | Odom Y: " + y.toFixed(3) + " m" +
-        " | Heading: " + headingDeg.toFixed(1) + "°";
+        " | Heading: " + headingDeg.toFixed(1) + " deg" +
+        mapText;
     });
 
     // ================= SLAM Map Display =================
@@ -492,7 +597,7 @@
     }
 
     function drawRobotOnMap(mapInfo, offsetX, offsetY, mapScale) {
-      if (latestOdom === null) {
+      if (latestMapPose === null) {
         return;
       }
 
@@ -501,13 +606,13 @@
       const originY = mapInfo.origin.position.y;
       const mapHeight = mapInfo.height;
 
-      const robotMapX = (latestOdom.x - originX) / resolution;
-      const robotMapY = (latestOdom.y - originY) / resolution;
+      const robotMapX = (latestMapPose.x - originX) / resolution;
+      const robotMapY = (latestMapPose.y - originY) / resolution;
 
       const robotCanvasX = offsetX + robotMapX * mapScale;
       const robotCanvasY = offsetY + (mapHeight - robotMapY) * mapScale;
 
-      const heading = latestOdom.heading;
+      const heading = latestMapPose.yaw;
 
       const arrowLength = 35;
       const sideLength = 25;
